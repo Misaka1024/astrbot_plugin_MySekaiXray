@@ -425,7 +425,7 @@ class MySekaiXrayPlugin(Star):
         async with aiohttp.ClientSession() as session:
             async with session.get(url) as resp:
                 if resp.status == 404:
-                    return None, "未找到该 UID 的数据，请先安装代理模块抓包上传\n发送 /烤森帮助 查看安装方法"
+                    return None, "未找到该 UID 的数据，请先安装代理模块抓包上传\n发送 小奏烤森帮助 查看安装方法"
                 if resp.status != 200:
                     return None, f"后端请求失败 (HTTP {resp.status})"
                 return await resp.json(), None
@@ -484,7 +484,7 @@ class MySekaiXrayPlugin(Star):
             return
 
         if not uid:
-            yield event.plain_result("你还没有绑定游戏 UID\n请先发送: /烤森绑定 <你的UID>")
+            yield event.plain_result("你还没有绑定游戏 UID\n请先发送: 小奏烤森绑定 <你的UID>")
             return
 
         try:
@@ -550,10 +550,10 @@ class MySekaiXrayPlugin(Star):
         help_text = (
             "世界计划MySekai资源查询\n\n"
             "指令列表:\n"
-            "· /烤森绑定 <UID> - 绑定游戏UID\n"
-            "· /烤森地图 - 查看采集资源分布\n"
-            "· /烤森密钥 - 生成网页上传密钥（5分钟有效）\n"
-            "· /烤森帮助 - 查看本帮助\n\n"
+            "· 小奏烤森绑定 <UID> - 绑定游戏UID\n"
+            "· 小奏烤森地图 - 查看采集资源分布\n"
+            "· 小奏烤森密钥 - 生成网页上传密钥（5分钟有效）\n"
+            "· 小奏烤森帮助 - 查看本帮助\n\n"
             "需要 iOS Shadowrocket（小火箭）安装抓包模块\n"
             f"安装教程:\n{HELP_URL}"
         )
