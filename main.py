@@ -521,6 +521,29 @@ class MySekaiXrayPlugin(Star):
             logger.error(f"图片生成异常: {traceback.format_exc()}")
             yield event.plain_result(f"图片生成出错: {e}")
 
+    @filter.command("烤森密钥")
+    async def key_command(self, event: AstrMessageEvent):
+        """生成一个5分钟有效的上传密钥"""
+        import aiohttp
+        try:
+            url = f"{API_BASE}/api/mysekai/genkey"
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, headers={'X-Admin-Key': 'artenas2026'}) as resp:
+                    if resp.status != 200:
+                        yield event.plain_result("密钥生成失败，请稍后重试")
+                        return
+                    data = await resp.json()
+                    key = data.get('key', '')
+                    ttl = data.get('ttl', 300)
+                    yield event.plain_result(
+                        f"你的上传密钥: {key}\n"
+                        f"有效期: {ttl // 60} 分钟\n"
+                        f"请在网页「本地上传」中输入此密钥"
+                    )
+        except Exception as e:
+            logger.error(f"密钥生成异常: {traceback.format_exc()}")
+            yield event.plain_result(f"密钥生成失败: {e}")
+
     @filter.command("烤森帮助")
     async def help_command(self, event: AstrMessageEvent):
         """查看 MySekai Xray 使用帮助和模块安装地址"""
@@ -529,8 +552,10 @@ class MySekaiXrayPlugin(Star):
             "指令列表:\n"
             "· /烤森绑定 <UID> - 绑定游戏UID\n"
             "· /烤森地图 - 查看采集资源分布\n"
+            "· /烤森密钥 - 生成网页上传密钥（5分钟有效）\n"
             "· /烤森帮助 - 查看本帮助\n\n"
-            f"代理模块安装地址:\n{HELP_URL}"
+            "需要 iOS Shadowrocket（小火箭）安装抓包模块\n"
+            f"安装教程:\n{HELP_URL}"
         )
         yield event.plain_result(help_text)
 
