@@ -404,23 +404,7 @@ async def sync_resources():
     logger.info("资源同步完成")
 
 
-# ========== 绑定数据存储 ==========
-BINDFILE = os.path.join(PLUGIN_DIR, 'bindings.json')
-
-
-def load_bindings():
-    if os.path.isfile(BINDFILE):
-        with open(BINDFILE, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    return {}
-
-
-def save_bindings(data):
-    with open(BINDFILE, 'w', encoding='utf-8') as f:
-        json.dump(data, f, ensure_ascii=False)
-
-
-# 帮助页面地址（代理模块安装指引）
+# ========== 绑定数据存储（服务端） ==========
 HELP_URL = "https://www.artenas.online/MySekai/index.html"
 
 
@@ -429,12 +413,10 @@ HELP_URL = "https://www.artenas.online/MySekai/index.html"
 class MySekaiXrayPlugin(Star):
     def __init__(self, context: Context):
         super().__init__(context)
-        self.bindings = {}
 
     async def initialize(self):
-        self.bindings = load_bindings()
         await sync_resources()
-        logger.info(f"MySekaiXray 插件已加载，已绑定 {len(self.bindings)} 个用户")
+        logger.info("MySekaiXray 插件已加载")
 
     async def _fetch_data(self, uid: str):
         """从后端 API 获取用户数据"""
@@ -448,6 +430,25 @@ class MySekaiXrayPlugin(Star):
                     return None, f"后端请求失败 (HTTP {resp.status})"
                 return await resp.json(), None
 
+    async def _bind_uid(self, qq_id: str, uid: str):
+        """向服务端保存 QQ-UID 绑定"""
+        import aiohttp
+        url = f"{API_BASE}/api/mysekai/bindQQ"
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json={'qq': qq_id, 'uid': uid}) as resp:
+                return resp.status == 200
+
+    async def _get_bind(self, qq_id: str):
+        """从服务端查询 QQ 绑定的 UID"""
+        import aiohttp
+        url = f"{API_BASE}/api/mysekai/bindQQ/{qq_id}"
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return data.get('uid')
+                return None
+
     @filter.command("烤森绑定")
     async def bind_command(self, event: AstrMessageEvent):
         """绑定游戏 UID 用法: 小奏烤森绑定 <游戏UID>"""
@@ -460,18 +461,30 @@ class MySekaiXrayPlugin(Star):
             return
 
         qq_id = event.get_sender_id()
-        self.bindings[qq_id] = uid
-        save_bindings(self.bindings)
-        yield event.plain_result(f"小奏绑定成功~ \nQQ: {qq_id}\nUID: {uid}")
+        try:
+            ok = await self._bind_uid(qq_id, uid)
+            if ok:
+                yield event.plain_result(f"绑定成功 ✓\nQQ: {qq_id}\nUID: {uid}")
+            else:
+                yield event.plain_result("绑定失败，请稍后重试")
+        except Exception as e:
+            logger.error(f"绑定异常: {traceback.format_exc()}")
+            yield event.plain_result(f"绑定失败: {e}")
 
     @filter.command("烤森地图")
     async def map_command(self, event: AstrMessageEvent):
         """查询已绑定 UID 的 MySekai 采集数据，返回资源图片"""
         qq_id = event.get_sender_id()
-        uid = self.bindings.get(qq_id)
+
+        try:
+            uid = await self._get_bind(qq_id)
+        except Exception as e:
+            logger.error(f"查询绑定异常: {traceback.format_exc()}")
+            yield event.plain_result(f"无法连接后端服务: {e}")
+            return
 
         if not uid:
-            yield event.plain_result("你还没有绑定游戏 UID\n请先发送: 小奏烤森绑定 <你的UID>")
+            yield event.plain_result("你还没有绑定游戏 UID\n请先发送: /烤森绑定 <你的UID>")
             return
 
         try:
@@ -514,9 +527,9 @@ class MySekaiXrayPlugin(Star):
         help_text = (
             "世界计划MySekai资源查询\n\n"
             "指令列表:\n"
-            "小奏烤森绑定 <UID> - 绑定游戏UID\n"
-            "小奏烤森地图 - 查看采集资源分布\n"
-            "小奏烤森帮助 - 查看本帮助\n\n"
+            "· /烤森绑定 <UID> - 绑定游戏UID\n"
+            "· /烤森地图 - 查看采集资源分布\n"
+            "· /烤森帮助 - 查看本帮助\n\n"
             f"代理模块安装地址:\n{HELP_URL}"
         )
         yield event.plain_result(help_text)
