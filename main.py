@@ -420,19 +420,22 @@ class MySekaiXrayPlugin(Star):
         super().__init__(context)
 
     async def initialize(self):
-        put_config(PLUGIN_NAME, "白名单", "whitelist", [], "允许使用烤森指令的QQ号列表，为空则不限制")
+        put_config(PLUGIN_NAME, "群聊白名单", "whitelist", [], "允许使用烤森指令的群号列表，为空则不限制")
         await sync_resources()
         logger.info("MySekaiXray 插件已加载")
 
-    def _check_whitelist(self, qq_id: str) -> bool:
-        """检查用户是否在白名单中，白名单为空则不限制"""
+    def _check_whitelist(self, event: AstrMessageEvent) -> bool:
+        """检查消息来源群是否在白名单中，白名单为空则不限制，私聊不限制"""
         cfg = load_config(PLUGIN_NAME)
         if not cfg:
             return True
         wl = cfg.get('whitelist', [])
         if not wl:
             return True
-        return str(qq_id) in [str(x) for x in wl]
+        group_id = event.get_group_id()
+        if not group_id:
+            return True  # 私聊不限制
+        return str(group_id) in [str(x) for x in wl]
 
     async def _fetch_data(self, uid: str):
         """从后端 API 获取用户数据"""
@@ -469,8 +472,8 @@ class MySekaiXrayPlugin(Star):
     async def bind_command(self, event: AstrMessageEvent):
         """绑定游戏 UID 用法: 小奏烤森绑定 <游戏UID>"""
         qq_id = event.get_sender_id()
-        if not self._check_whitelist(qq_id):
-            yield event.plain_result("你没有使用该功能的权限")
+        if not self._check_whitelist(event):
+            yield event.plain_result("该群未授权使用此功能")
             return
 
         raw = event.message_str.strip()
@@ -496,8 +499,8 @@ class MySekaiXrayPlugin(Star):
     async def map_command(self, event: AstrMessageEvent):
         """查询已绑定 UID 的 MySekai 采集数据，返回资源图片"""
         qq_id = event.get_sender_id()
-        if not self._check_whitelist(qq_id):
-            yield event.plain_result("你没有使用该功能的权限")
+        if not self._check_whitelist(event):
+            yield event.plain_result("该群未授权使用此功能")
             return
 
         try:
@@ -549,8 +552,8 @@ class MySekaiXrayPlugin(Star):
     async def key_command(self, event: AstrMessageEvent):
         """生成一个5分钟有效的上传密钥"""
         qq_id = event.get_sender_id()
-        if not self._check_whitelist(qq_id):
-            yield event.plain_result("你没有使用该功能的权限")
+        if not self._check_whitelist(event):
+            yield event.plain_result("该群未授权使用此功能")
             return
 
         import aiohttp
@@ -576,16 +579,14 @@ class MySekaiXrayPlugin(Star):
     @filter.command("烤森白名单")
     @filter.permission_type(PermissionType.ADMIN)
     async def whitelist_command(self, event: AstrMessageEvent):
-        """管理白名单 用法: 小奏烤森白名单 [添加/删除 QQ号]"""
+        """管理群聊白名单 用法: 小奏烤森白名单 [添加/删除 群号]"""
         raw = event.message_str.strip()
 
         cfg = load_config(PLUGIN_NAME)
         wl = cfg.get('whitelist', []) if cfg else []
         wl = [str(x) for x in wl]
 
-        # 解析子命令
         parts = raw.split()
-        # parts 可能是 ['烤森白名单'] 或 ['烤森白名单', '添加', '123456'] 等
         action = None
         target = None
         for i, p in enumerate(parts):
@@ -597,29 +598,29 @@ class MySekaiXrayPlugin(Star):
 
         if not action:
             if not wl:
-                yield event.plain_result("当前白名单为空（不限制使用）")
+                yield event.plain_result("当前群聊白名单为空（不限制使用）")
             else:
-                yield event.plain_result(f"当前白名单 ({len(wl)} 人):\n" + "\n".join(wl))
+                yield event.plain_result(f"当前群聊白名单 ({len(wl)} 个群):\n" + "\n".join(wl))
             return
 
         if not target or not target.isdigit():
-            yield event.plain_result(f"用法: 小奏烤森白名单 添加/删除 <QQ号>")
+            yield event.plain_result("用法: 小奏烤森白名单 添加/删除 <群号>")
             return
 
         if action == '添加':
             if target not in wl:
                 wl.append(target)
                 update_config(PLUGIN_NAME, 'whitelist', wl)
-                yield event.plain_result(f"已添加 {target} 到白名单 ✓")
+                yield event.plain_result(f"已添加群 {target} 到白名单 ✓")
             else:
-                yield event.plain_result(f"{target} 已在白名单中")
+                yield event.plain_result(f"群 {target} 已在白名单中")
         elif action == '删除':
             if target in wl:
                 wl.remove(target)
                 update_config(PLUGIN_NAME, 'whitelist', wl)
-                yield event.plain_result(f"已从白名单移除 {target} ✓")
+                yield event.plain_result(f"已从白名单移除群 {target} ✓")
             else:
-                yield event.plain_result(f"{target} 不在白名单中")
+                yield event.plain_result(f"群 {target} 不在白名单中")
 
     @filter.command("烤森帮助")
     async def help_command(self, event: AstrMessageEvent):
@@ -630,7 +631,7 @@ class MySekaiXrayPlugin(Star):
             "· 小奏烤森绑定 <UID> - 绑定游戏UID\n"
             "· 小奏烤森地图 - 查看采集资源分布\n"
             "· 小奏烤森密钥 - 生成网页上传密钥（5分钟有效）\n"
-            "· 小奏烤森白名单 - 查看/管理白名单（仅管理员）\n"
+            "· 小奏烤森白名单 - 查看/管理群聊白名单（仅管理员）\n"
             "· 小奏烤森帮助 - 查看本帮助\n\n"
             "需要 iOS Shadowrocket（小火箭）安装抓包模块\n"
             f"安装教程:\n{HELP_URL}"
