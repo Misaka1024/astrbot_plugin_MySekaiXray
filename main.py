@@ -15,6 +15,8 @@ MAP_DIR = os.path.join(PLUGIN_DIR, 'map')
 
 # 后端 API 地址（html 工作区的 Flask 服务）
 API_BASE = 'http://127.0.0.1:5100'
+# 资源文件远程地址（nginx 静态服务）
+RESOURCE_BASE = 'https://www.artenas.online/MySekai'
 
 SITE_ORDER = ['初始空地', '心愿沙滩', '烂漫花田', '忘却之所']
 
@@ -180,12 +182,14 @@ def generate_grid_map(map_data, outpath):
 
     ICON_SIZE = 20
     FONT_COUNT_BG = _get_font(11)
+    FONT_COUNT_SM = _get_font(9)
 
     icon_cache = {}
     for name, fname in ICON_MAP.items():
         path = os.path.join(ICON_DIR, fname)
         if os.path.isfile(path):
-            icon_cache[name] = Image.open(path).convert('RGBA').resize((ICON_SIZE, ICON_SIZE), Image.LANCZOS)
+            icon_cache[name] = Image.open(path).convert('RGBA')
+    logger.info(f"地图图标加载: {len(icon_cache)}/{len(ICON_MAP)} 个, ICON_DIR={ICON_DIR}")
 
     map_images = OrderedDict()
     map_item_px = OrderedDict()
@@ -261,25 +265,48 @@ def generate_grid_map(map_data, outpath):
 
         draw = ImageDraw.Draw(img)
         ICON_BG = 28
+        SMALL_ICON = 22
         item_pixels = []
 
         for (cx, cz), name_counts in coords.items():
             px, py = coord_to_px(cx, cz)
             item_pixels.append((px, py))
-            main_name = max(name_counts, key=name_counts.get)
-            total_count = sum(name_counts.values())
+            drop_entries = sorted(name_counts.items(), key=lambda t: t[1], reverse=True)
+            num_types = len(drop_entries)
 
-            if main_name in icon_cache:
-                icon_img = icon_cache[main_name].resize((ICON_BG, ICON_BG), Image.LANCZOS)
-                img.paste(icon_img, (px - ICON_BG // 2, py - ICON_BG // 2), icon_img)
+            if num_types == 1:
+                # 单种资源：居中绘制
+                main_name, count = drop_entries[0]
+                if main_name in icon_cache:
+                    icon_img = icon_cache[main_name].resize((ICON_BG, ICON_BG), Image.LANCZOS)
+                    img.paste(icon_img, (px - ICON_BG // 2, py - ICON_BG // 2), icon_img)
+                else:
+                    color = color_map.get(main_name, PALETTE[0])
+                    draw.ellipse([px - 10, py - 10, px + 10, py + 10], fill=color + (200,), outline=(255, 255, 255, 200))
+                tx, ty = px + ICON_BG // 2 - 4, py + ICON_BG // 2 - 8
+                for dx, dy in [(-1,0),(1,0),(0,-1),(0,1)]:
+                    draw.text((tx+dx, ty+dy), str(count), fill=(0, 0, 0), font=FONT_COUNT_BG)
+                draw.text((tx, ty), str(count), fill=(255, 255, 255), font=FONT_COUNT_BG)
             else:
-                color = color_map.get(main_name, PALETTE[0])
-                draw.ellipse([px - 10, py - 10, px + 10, py + 10], fill=color + (200,), outline=(255, 255, 255, 200))
-
-            tx, ty = px + ICON_BG // 2 - 4, py + ICON_BG // 2 - 8
-            for dx, dy in [(-1,0),(1,0),(0,-1),(0,1)]:
-                draw.text((tx+dx, ty+dy), str(total_count), fill=(0, 0, 0), font=FONT_COUNT_BG)
-            draw.text((tx, ty), str(total_count), fill=(255, 255, 255), font=FONT_COUNT_BG)
+                # 多种资源：围绕中心点散开排列
+                import math
+                spread = min(SMALL_ICON * 0.7, 16)
+                for i, (name, count) in enumerate(drop_entries):
+                    angle = (2 * math.pi * i / num_types) - math.pi / 2
+                    dx = math.cos(angle) * spread
+                    dy = math.sin(angle) * spread
+                    ix = int(px + dx)
+                    iy = int(py + dy)
+                    if name in icon_cache:
+                        icon_img = icon_cache[name].resize((SMALL_ICON, SMALL_ICON), Image.LANCZOS)
+                        img.paste(icon_img, (ix - SMALL_ICON // 2, iy - SMALL_ICON // 2), icon_img)
+                    else:
+                        color = color_map.get(name, PALETTE[0])
+                        draw.ellipse([ix - 8, iy - 8, ix + 8, iy + 8], fill=color + (200,), outline=(255, 255, 255, 200))
+                    tx, ty = ix + SMALL_ICON // 2 - 4, iy + SMALL_ICON // 2 - 6
+                    for ddx, ddy in [(-1,0),(1,0),(0,-1),(0,1)]:
+                        draw.text((tx+ddx, ty+ddy), str(count), fill=(0, 0, 0), font=FONT_COUNT_SM)
+                    draw.text((tx, ty), str(count), fill=(255, 255, 255), font=FONT_COUNT_SM)
 
         map_images[site_name] = img
         map_item_px[site_name] = item_pixels
@@ -335,6 +362,48 @@ def generate_grid_map(map_data, outpath):
     grid.save(outpath)
 
 
+# ========== 资源文件同步 ==========
+async def sync_resources():
+    """启动时检查并从远程下载缺失的 icon/map 资源文件"""
+    import aiohttp
+    os.makedirs(ICON_DIR, exist_ok=True)
+    os.makedirs(MAP_DIR, exist_ok=True)
+
+    files_to_sync = []
+    for fname in ICON_MAP.values():
+        local = os.path.join(ICON_DIR, fname)
+        if not os.path.isfile(local):
+            files_to_sync.append(('icon', fname, local))
+    # seed.png 缺省图标
+    seed_local = os.path.join(ICON_DIR, 'seed.png')
+    if not os.path.isfile(seed_local):
+        files_to_sync.append(('icon', 'seed.png', seed_local))
+    for fname in MAP_BG.values():
+        local = os.path.join(MAP_DIR, fname)
+        if not os.path.isfile(local):
+            files_to_sync.append(('map', fname, local))
+
+    if not files_to_sync:
+        logger.info(f"资源文件完整，无需同步")
+        return
+
+    logger.info(f"需要同步 {len(files_to_sync)} 个资源文件...")
+    async with aiohttp.ClientSession() as session:
+        for subdir, fname, local_path in files_to_sync:
+            url = f"{RESOURCE_BASE}/{subdir}/{fname}"
+            try:
+                async with session.get(url) as resp:
+                    if resp.status == 200:
+                        data = await resp.read()
+                        with open(local_path, 'wb') as f:
+                            f.write(data)
+                    else:
+                        logger.warning(f"资源下载失败: {fname} (HTTP {resp.status})")
+            except Exception as e:
+                logger.warning(f"资源下载异常: {fname}: {e}")
+    logger.info("资源同步完成")
+
+
 # ========== 绑定数据存储 ==========
 BINDFILE = os.path.join(PLUGIN_DIR, 'bindings.json')
 
@@ -364,6 +433,7 @@ class MySekaiXrayPlugin(Star):
 
     async def initialize(self):
         self.bindings = load_bindings()
+        await sync_resources()
         logger.info(f"MySekaiXray 插件已加载，已绑定 {len(self.bindings)} 个用户")
 
     async def _fetch_data(self, uid: str):

@@ -8,6 +8,12 @@ build/
 .env
 .venv/
 venv/
+*.zip
 
 # 运行时生成的绑定数据
 bindings.json
+
+# 资源文件（插件启动时自动从远程下载）
+icon/
+map/
+mappings/
